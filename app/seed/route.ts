@@ -1,11 +1,9 @@
-import bcrypt from 'bcryptjs';
-import postgres from 'postgres';
-import { invoices, customers, revenue, users } from '../lib/placeholder-data';
+import bcrypt from "bcryptjs";
+import postgres from "postgres";
+import { invoices, customers, revenue, users } from "../lib/placeholder-data";
 
 const sql = postgres(process.env.POSTGRES_URL!, {
-  ssl: 'require',
-  connect_timeout: 30,
-  idle_timeout: 30,
+  ssl: "require",
 });
 
 async function createTables() {
@@ -85,7 +83,12 @@ async function insertData() {
     ),
   );
 
-  return { insertedUsers, insertedCustomers, insertedInvoices, insertedRevenue };
+  return {
+    insertedUsers,
+    insertedCustomers,
+    insertedInvoices,
+    insertedRevenue,
+  };
 }
 
 export async function GET() {
@@ -102,7 +105,9 @@ export async function GET() {
     // 3. 重新插入数据
     const result = await insertData();
 
-    return Response.json({ message: 'Database cleared and seeded successfully' });
+    return Response.json({
+      message: "Database cleared and seeded successfully",
+    });
   } catch (error) {
     return Response.json({ error: String(error) }, { status: 500 });
   }
