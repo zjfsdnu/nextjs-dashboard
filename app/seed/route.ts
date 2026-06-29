@@ -2,9 +2,13 @@ import bcrypt from 'bcryptjs';
 import postgres from 'postgres';
 import { invoices, customers, revenue, users } from '../lib/placeholder-data';
 
-const sql = postgres(process.env.POSTGRES_URL!, { ssl: 'require' });
+const sql = postgres(process.env.POSTGRES_URL!, {
+  ssl: 'require',
+  connect_timeout: 30,
+  idle_timeout: 30,
+});
 
-async function seedUsers() {
+async function createTables() {
   await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
   await sql`
     CREATE TABLE IF NOT EXISTS users (
@@ -14,24 +18,14 @@ async function seedUsers() {
       password TEXT NOT NULL
     );
   `;
-
-  const insertedUsers = await Promise.all(
-    users.map(async (user) => {
-      const hashedPassword = await bcrypt.hash(user.password, 10);
-      return sql`
-        INSERT INTO users (id, name, email, password)
-        VALUES (${user.id}, ${user.name}, ${user.email}, ${hashedPassword})
-        ON CONFLICT (id) DO NOTHING;
-      `;
-    }),
-  );
-
-  return insertedUsers;
-}
-
-async function seedInvoices() {
-  await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
-
+  await sql`
+    CREATE TABLE IF NOT EXISTS customers (
+      id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      email VARCHAR(255) NOT NULL,
+      image_url VARCHAR(255) NOT NULL
+    );
+  `;
   await sql`
     CREATE TABLE IF NOT EXISTS invoices (
       id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
@@ -41,31 +35,25 @@ async function seedInvoices() {
       date DATE NOT NULL
     );
   `;
-
-  const insertedInvoices = await Promise.all(
-    invoices.map(
-      (invoice) => sql`
-        INSERT INTO invoices (customer_id, amount, status, date)
-        VALUES (${invoice.customer_id}, ${invoice.amount}, ${invoice.status}, ${invoice.date})
-        ON CONFLICT (id) DO NOTHING;
-      `,
-    ),
-  );
-
-  return insertedInvoices;
-}
-
-async function seedCustomers() {
-  await sql`CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`;
-
   await sql`
-    CREATE TABLE IF NOT EXISTS customers (
-      id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-      name VARCHAR(255) NOT NULL,
-      email VARCHAR(255) NOT NULL,
-      image_url VARCHAR(255) NOT NULL
+    CREATE TABLE IF NOT EXISTS revenue (
+      month VARCHAR(4) NOT NULL UNIQUE,
+      revenue INT NOT NULL
     );
   `;
+}
+
+async function insertData() {
+  const insertedUsers = await Promise.all(
+    users.map(async (user) => {
+      const hashedPassword = await bcrypt.hash(user.password, 4);
+      return sql`
+        INSERT INTO users (id, name, email, password)
+        VALUES (${user.id}, ${user.name}, ${user.email}, ${hashedPassword})
+        ON CONFLICT (id) DO NOTHING;
+      `;
+    }),
+  );
 
   const insertedCustomers = await Promise.all(
     customers.map(
@@ -77,16 +65,15 @@ async function seedCustomers() {
     ),
   );
 
-  return insertedCustomers;
-}
-
-async function seedRevenue() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS revenue (
-      month VARCHAR(4) NOT NULL UNIQUE,
-      revenue INT NOT NULL
-    );
-  `;
+  const insertedInvoices = await Promise.all(
+    invoices.map(
+      (invoice) => sql`
+        INSERT INTO invoices (customer_id, amount, status, date)
+        VALUES (${invoice.customer_id}, ${invoice.amount}, ${invoice.status}, ${invoice.date})
+        ON CONFLICT (id) DO NOTHING;
+      `,
+    ),
+  );
 
   const insertedRevenue = await Promise.all(
     revenue.map(
@@ -98,20 +85,25 @@ async function seedRevenue() {
     ),
   );
 
-  return insertedRevenue;
+  return { insertedUsers, insertedCustomers, insertedInvoices, insertedRevenue };
 }
 
 export async function GET() {
   try {
-    const result = await sql.begin((sql) => [
-      seedUsers(),
-      seedCustomers(),
-      seedInvoices(),
-      seedRevenue(),
-    ]);
+    // 禁用语句超时（针对当前会话）
+    await sql`SET statement_timeout = 0`;
 
-    return Response.json({ message: 'Database seeded successfully' });
+    // 1. 确保表存在
+    await createTables();
+
+    // 2. 清空表数据
+    await sql`TRUNCATE TABLE invoices, customers, revenue, users RESTART IDENTITY CASCADE`;
+
+    // 3. 重新插入数据
+    const result = await insertData();
+
+    return Response.json({ message: 'Database cleared and seeded successfully' });
   } catch (error) {
-    return Response.json({ error }, { status: 500 });
+    return Response.json({ error: String(error) }, { status: 500 });
   }
 }
